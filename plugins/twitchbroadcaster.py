@@ -59,7 +59,7 @@ class twitchannouncer(Processor):
             live_streamers.append(broadcaster.name)
 
         if not live_streamers:
-            message = u'Noone is currently streaming'
+            message = u'No one is currently streaming'
             event.addresponse(message, {}, address=False, processed=True)
         else:
             message = u'The following people are streaming: %s' % \
