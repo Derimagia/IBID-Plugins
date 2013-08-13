@@ -7,8 +7,7 @@ Processes any links posted through reddit, twitch, and youtube. Returns info abo
 
 Twitch Broadcaster
 ---------------------
-Notifies a source/target (needs to be configured) with information about when a twitch broadcaster starts streaming or switches games. Twitch broadcasters currently need to be configured in the plugin file.
-
+Notifies a source/target (needs to be configured) with information about when a twitch broadcaster starts streaming or switches games. ibid-db --upgrade needs to create the database schema.
 
 
 
