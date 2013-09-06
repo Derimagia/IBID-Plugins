@@ -1,1 +1,5 @@
 *.pyc
+.idea
+ibid.ini
+logging.ini
+ibid.log
