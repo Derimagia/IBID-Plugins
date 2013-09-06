@@ -47,10 +47,11 @@ class TwitchBroadcaster(object):
 
 class TwitchAnnouncer(Processor):
     features = ('twitch',)
-    source = Option('twitch_output_source', 'Source for Twitch Broadcaster Updates', u'irc')
-    target = Option('twitch_output_target', 'Target for Twitch Broadcaster Updates', u'#example')
+    source = Option('output_source', 'Source for Twitch Broadcaster Updates', u'')
+    target = Option('output_target', 'Target for Twitch Broadcaster Updates', u'')
     usage = u'!twitch <name>'
     addressed = False
+    priority = 200
 
     def setup(self):
         Processor.setup(self)
@@ -62,7 +63,6 @@ class TwitchAnnouncer(Processor):
         self.updateBroadcasters()
 
         for broadcaster in self.twitchlist.justLive():
-
             message = u'%s just went live and is playing %s. "%s" - %s' % \
                       (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.liveurl)
             event.addresponse(message, source=self.source, target=self.target, address=False)
@@ -81,7 +81,7 @@ class TwitchAnnouncer(Processor):
 
         message = u'The following people are being watched: %s' % \
                   (human_join(twitch_names))
-        event.addresponse(message, {}, address=False, processed=True)
+        event.addresponse(message, address=False, processed=True)
 
     @match(r'!twitchadd(?:\s+{broadcaster_name:chunk})')
     def twitchAdd(self, event, broadcaster_name):
@@ -107,44 +107,45 @@ class TwitchAnnouncer(Processor):
         else:
             event.addresponse(u"Broadcaster is not currently being watched: %s", broadcaster_name)
 
-    @match(r'!twitch(?:\s+{broadcaster_name:chunk})?')
+    @match(r'!(?:twitch)?{broadcaster_name:chunk}?')
     def broadcasterInfoProcess(self, event, broadcaster_name):
-        if broadcaster_name:
-            self.twitchlist.update()
-            if (broadcaster_name == "*"):
-                for broadcaster in self.twitchlist.isLive():
-                    self.broadcasterInfo(event, broadcaster.name)
-            else:
-                self.broadcasterInfo(event, broadcaster_name)
-        else:
-            live_streamers = []
-            for tempBroadcaster in self.twitchlist.isLive():
-                live_streamers.append(tempBroadcaster.name)
+        live_streamers = []
+        for tempBroadcaster in self.twitchlist.isLive():
+            live_streamers.append(tempBroadcaster.name)
 
-            if not live_streamers:
-                message = u'No one is currently streaming'
-                event.addresponse(message, {}, address=False, processed=True)
+        if not live_streamers:
+            message = u'No one is currently streaming'
+            event.addresponse(message, address=False, processed=True)
+        else:
+            if broadcaster_name:
+                self.twitchlist.update()
+                if broadcaster_name == "*":
+                    for live_streamer in live_streamers:
+                        self.broadcasterInfo(event, live_streamer)
+                else:
+                    self.broadcasterInfo(event, broadcaster_name)
             else:
                 message = u'The following people are streaming: %s' % \
                           (human_join(live_streamers))
-                event.addresponse(message, {}, address=False, processed=True)
+                event.addresponse(message, address=False, processed=True)
 
     def broadcasterInfo(self, event, broadcaster_name):
-        broadcaster = self.twitchlist.getBroadcasterByName(broadcaster_name)
+        broadcasterListSearch = self.twitchlist.searchBroadcasterByName(broadcaster_name)
 
-        if broadcaster:
-            if broadcaster.isLive():
-                message = u'%s is live and is playing %s. "%s" - %s' % \
-                          (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.liveurl)
-                event.addresponse(message, {}, address=False, processed=True)
-            else:
-                message = u'%s is not live. - %s' % \
-                          (broadcaster.name, broadcaster.liveurl)
-                event.addresponse(message, {}, address=False, processed=True)
+        if len(broadcasterListSearch) > 0:
+            for broadcaster in broadcasterListSearch.iterate():
+                if broadcaster.isLive():
+                    message = u'%s is live and is playing %s. "%s" - %s' % \
+                              (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.liveurl)
+                    event.addresponse(message, address=False, processed=True)
+                else:
+                    message = u'%s is not live. - %s' % \
+                              (broadcaster.name, broadcaster.liveurl)
+                    event.addresponse(message, address=False, processed=True)
         else:
             message = u'%s is an invalid user. Add user with !twitchadd <user>' % \
                       (broadcaster_name)
-            event.addresponse(message, {}, address=False, processed=True)
+            event.addresponse(message, address=False, processed=True)
 
     def loadBroadcastersFromDB(self):
         session = ibid.databases.ibid()
@@ -162,7 +163,8 @@ class TwitchAnnouncer(Processor):
 
 class TwitchList(object):
     broadcasters = {} 
-    def __init__(self, broadcaster_list):
+    def __init__(self, broadcaster_list=[]):
+        self.broadcasters = {}
         for broadcaster in broadcaster_list:
             self.broadcasters[broadcaster.name] = broadcaster
 
@@ -199,6 +201,15 @@ class TwitchList(object):
             return self.broadcasters[name]
         return TwitchBroadcaster(name)
 
+    def searchBroadcasterByName(self, search):
+        returnList = TwitchList()
+
+        for broadcaster in self.iterate():
+            if broadcaster.name.find(search) >= 0:
+                returnList.add(broadcaster)
+
+        return returnList
+
     def iterate(self):
         for broadcaster in self.broadcasters:
             yield self.getBroadcasterByName(broadcaster)
@@ -217,3 +228,6 @@ class TwitchList(object):
         for broadcaster in self.iterate():
             if broadcaster.isLive():
                 yield broadcaster
+
+    def __len__(self):
+        return len(self.broadcasters)

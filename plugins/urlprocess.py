@@ -320,7 +320,7 @@ class urlprocess(Processor):
 
         if (self.checkTwitch.search(query, re.IGNORECASE)):
             data = self.processTwitchURL(query)
-        elif (self.checkReddit.search(query, re.IGNORECASE)):
+        if (self.checkReddit.search(query, re.IGNORECASE)):
             data = self.processReddit(query)
         else:
             data = self.processUrlThroughReddit(query)
