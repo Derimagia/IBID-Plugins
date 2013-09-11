@@ -11,10 +11,6 @@ Notifies a source/target (needs to be configured) with information about when a 
 
 For the database support, please note the following issue: https://bugs.launchpad.net/ibid/+bug/1211986
 
-Cleverbot
----------------------
-Answers the user when spoken to and there's nothing of greater importance. Uses the cleverbot python library so note the requirements.txt
-
 Wolfram Alpha
 ---------------------
 Uses the Wolfram Alpha API and responds to the user with a query when a message is prefixed with ?

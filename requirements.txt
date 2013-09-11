@@ -1,3 +1,2 @@
 wolframalpha
-cleverbot
 steamodd
