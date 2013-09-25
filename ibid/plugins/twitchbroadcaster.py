@@ -8,6 +8,7 @@ import copy
 from pprint import pprint
 from ibid.db import IbidUnicodeText, Boolean, Integer, DateTime, \
                     Table, Column, ForeignKey, relation, Base, VersionedSchema
+from random import randint
 
 features = {'twitchannouncer': {
     'description': u'Announces twitch broadcasters, can get information about a select list of streamers.',
@@ -41,9 +42,28 @@ class TwitchBroadcaster(object):
     def switchedGames(self):
         return self.previous.game != self.game and not self.justLive()
 
-    def isLive (self):
+    def isLive(self):
         return self.live
 
+    def update(self):
+        try:
+            new_data = json_webservice('http://api.justin.tv/api/stream/list.json?channel=' + self.name)
+
+            broadcaster_data = new_data.pop()
+
+            del self.previous
+            self.previous = copy.copy(self)
+            self.live = False
+
+            channel = broadcaster_data['channel']
+            login = channel['login']
+
+            self.live = True
+            self.game = channel['meta_game']
+            self.title = broadcaster_data['title']
+            self.viewers = broadcaster_data['channel_count']
+        except:
+            pass
 
 class TwitchAnnouncer(Processor):
     features = ('twitch',)
@@ -63,13 +83,13 @@ class TwitchAnnouncer(Processor):
         self.updateBroadcasters()
 
         for broadcaster in self.twitchlist.justLive():
-            message = u'%s just went live and is playing %s. "%s" - %s' % \
-                      (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.liveurl)
+            message = u'%s just went live and is playing %s. "%s" - %s viewers - %s' % \
+                      (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.viewers, broadcaster.liveurl)
             event.addresponse(message, source=self.source, target=self.target, address=False)
 
         for broadcaster in self.twitchlist.switchedGames():
-            message = u'%s just switched games and is playing %s. "%s" - %s' % \
-                      (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.liveurl)
+            message = u'%s just switched games and is playing %s. "%s" - %s viewers - %s' % \
+                      (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.viewers, broadcaster.liveurl)
             event.addresponse(message, source=self.source, target=self.target, address=False)
 
     @match(r'!twitchlist')
@@ -83,7 +103,23 @@ class TwitchAnnouncer(Processor):
                   (human_join(twitch_names))
         event.addresponse(message, address=False, processed=True)
 
-    @match(r'!twitchadd(?:\s+{broadcaster_name:chunk})')
+    @match(r'!twitchrandom')
+    def twitchRandom(self, event):
+        summary = json_webservice('https://api.twitch.tv/kraken/streams/summary')
+        maxchannel = summary['channels']
+        randomnum = randint(1, maxchannel)
+
+        query = json_webservice('https://api.twitch.tv/kraken/streams?limit=1&offset=%d' % randomnum)
+
+        stream = query['streams'].pop()
+
+        message = u'Random Stream found. Number:  %s/%s' % \
+                  (randomnum, maxchannel)
+        event.addresponse(message, address=False, processed=True)
+
+        self.broadcasterInfo(event, stream['channel']['name'])
+
+    @match(r'!twitchadd {broadcaster_name:chunk}')
     def twitchAdd(self, event, broadcaster_name):
         broadcasterCheck = event.session.query(TwitchBroadcasterDB).filter_by(name=broadcaster_name).first()
 
@@ -95,7 +131,7 @@ class TwitchAnnouncer(Processor):
         else:
             event.addresponse(u"Broadcaster already is being watched: %s", broadcaster_name)
 
-    @match(r'!twitchremove(?:\s+{broadcaster_name:chunk})')
+    @match(r'!twitchremove {broadcaster_name:chunk}')
     def twitchRemove(self, event, broadcaster_name):
         broadcasterCheck = event.session.query(TwitchBroadcasterDB).filter_by(name=broadcaster_name).first()
 
@@ -107,43 +143,55 @@ class TwitchAnnouncer(Processor):
         else:
             event.addresponse(u"Broadcaster is not currently being watched: %s", broadcaster_name)
 
-    @match(r'!(?:twitch)?{broadcaster_name:chunk}?')
+    @match(r'!(?:twitch )?{broadcaster_name:chunk}?')
     def broadcasterInfoProcess(self, event, broadcaster_name):
+        if event.processed:
+            return
+
         live_streamers = []
         for tempBroadcaster in self.twitchlist.isLive():
             live_streamers.append(tempBroadcaster.name)
 
-        if not live_streamers:
-            message = u'No one is currently streaming'
-            event.addresponse(message, address=False, processed=True)
-        else:
-            if broadcaster_name:
-                self.twitchlist.update()
-                if broadcaster_name == "*":
-                    for live_streamer in live_streamers:
-                        self.broadcasterInfo(event, live_streamer)
-                else:
-                    self.broadcasterInfo(event, broadcaster_name)
+        if broadcaster_name:
+            self.twitchlist.update()
+            if broadcaster_name == "*":
+                for live_streamer in live_streamers:
+                    self.broadcasterInfo(event, live_streamer)
             else:
+                self.broadcasterInfo(event, broadcaster_name)
+        else:
+            if live_streamers:
                 message = u'The following people are streaming: %s' % \
                           (human_join(live_streamers))
                 event.addresponse(message, address=False, processed=True)
 
+        if not event.processed:
+            message = u'No one is currently streaming'
+            event.addresponse(message, address=False, processed=True)
+
     def broadcasterInfo(self, event, broadcaster_name):
         broadcasterListSearch = self.twitchlist.searchBroadcasterByName(broadcaster_name)
+
+        if len(broadcasterListSearch) == 0:
+            broadcaster = TwitchBroadcaster(broadcaster_name)
+            broadcaster.update()
+
+            if broadcaster.isLive():
+                broadcasterListSearch = TwitchList()
+                broadcasterListSearch.add(broadcaster)
 
         if len(broadcasterListSearch) > 0:
             for broadcaster in broadcasterListSearch.iterate():
                 if broadcaster.isLive():
-                    message = u'%s is live and is playing %s. "%s" - %s' % \
-                              (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.liveurl)
+                    message = u'%s is live and is playing %s. "%s" - %s viewers - %s' % \
+                              (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.viewers, broadcaster.liveurl)
                     event.addresponse(message, address=False, processed=True)
                 else:
                     message = u'%s is not live. - %s' % \
                               (broadcaster.name, broadcaster.liveurl)
                     event.addresponse(message, address=False, processed=True)
         else:
-            message = u'%s is an invalid user. Add user with !twitchadd <user>' % \
+            message = u'%s is an invalid user or is not live. Add user with !twitchadd <user>' % \
                       (broadcaster_name)
             event.addresponse(message, address=False, processed=True)
 
