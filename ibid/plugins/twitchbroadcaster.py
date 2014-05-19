@@ -1,14 +1,17 @@
 import ibid
-from ibid.plugins import Processor, match, authorise, periodic
-from ibid.utils import human_join, json_webservice, plural
+from datetime import datetime
+import logging
+
+from ibid.plugins import Processor, match, periodic
+from ibid.utils import human_join, json_webservice, format_date
 from ibid.config import Option
-import json
-import urllib
 import copy
 from pprint import pprint
-from ibid.db import IbidUnicodeText, Boolean, Integer, DateTime, \
-                    Table, Column, ForeignKey, relation, Base, VersionedSchema
+from ibid.db import IbidUnicodeText, Integer, DateTime, \
+                    Table, Column, Base, VersionedSchema
 from random import randint
+
+log = logging.getLogger('plugins.twitchbroadcaster')
 
 features = {'twitchannouncer': {
     'description': u'Announces twitch broadcasters, can get information about a select list of streamers.',
@@ -19,11 +22,17 @@ class TwitchBroadcasterDB(Base):
     __table__ = Table('twitch_broadcasters', Base.metadata,
     Column('id', Integer, primary_key=True),
     Column('name', IbidUnicodeText, nullable=False, index=True),
+    Column('lastlive', DateTime, nullable=True),
     useexisting=True)
-    __table__.versioned_schema = VersionedSchema(__table__, 1)
 
     def __init__(self, name):
         self.name = name
+
+    class TwitchBroadcasterSchema(VersionedSchema):
+        def upgrade_1_to_2(self):
+            self.add_column(Column('lastlive', DateTime, nullable=True))
+
+    __table__.versioned_schema = TwitchBroadcasterSchema(__table__, 2)
 
 
 class TwitchBroadcaster(object):
@@ -35,6 +44,16 @@ class TwitchBroadcaster(object):
         self.title = ''
         self.viewers = 0
         self.liveurl = 'http://twitch.tv/' + name
+        self.lastlive = None
+
+    @classmethod
+    def from_db(cls, broadcaster_db):
+        broadcaster = cls(broadcaster_db.name)
+        broadcaster.lastlive = broadcaster_db.lastlive
+        return broadcaster
+
+    def justOffline(self):
+        return self.previous.live and not self.live
 
     def justLive(self):
         return not self.previous.live and self.live
@@ -44,6 +63,9 @@ class TwitchBroadcaster(object):
 
     def isLive(self):
         return self.live
+
+    def format_lastlive(self):
+        return format_date(self.lastlive) if self.lastlive else 'Never'
 
     def update(self):
         try:
@@ -62,8 +84,15 @@ class TwitchBroadcaster(object):
             self.game = channel['meta_game']
             self.title = broadcaster_data['title']
             self.viewers = broadcaster_data['channel_count']
-        except:
-            pass
+        except Exception, e:
+            log.debug(u'Error while updating broadcasters %s' % (e.message))
+
+    def updateDB(self):
+        session = ibid.databases.ibid()
+        broadcasterCheck = session.query(TwitchBroadcasterDB).filter_by(name=self.name).first()
+        broadcasterCheck.lastlive = self.lastlive
+        session.add(broadcasterCheck)
+        session.commit()
 
 class TwitchAnnouncer(Processor):
     features = ('twitch',)
@@ -147,13 +176,13 @@ class TwitchAnnouncer(Processor):
     def broadcasterInfoProcess(self, event, broadcaster_name):
         if event.processed:
             return
+        self.twitchlist.update()
 
         live_streamers = []
         for tempBroadcaster in self.twitchlist.isLive():
             live_streamers.append(tempBroadcaster.name)
 
         if broadcaster_name:
-            self.twitchlist.update()
             if broadcaster_name == "*":
                 for live_streamer in live_streamers:
                     self.broadcasterInfo(event, live_streamer)
@@ -187,8 +216,8 @@ class TwitchAnnouncer(Processor):
                               (broadcaster.name, broadcaster.game, broadcaster.title, broadcaster.viewers, broadcaster.liveurl)
                     event.addresponse(message, address=False, processed=True)
                 else:
-                    message = u'%s is not live. - %s' % \
-                              (broadcaster.name, broadcaster.liveurl)
+                    message = u'%s is not live. Last live: %s - %s' % \
+                              (broadcaster.name, broadcaster.format_lastlive(), broadcaster.liveurl)
                     event.addresponse(message, address=False, processed=True)
         else:
             message = u'%s is an invalid user or is not live. Add user with !twitchadd <user>' % \
@@ -201,7 +230,7 @@ class TwitchAnnouncer(Processor):
         newList = []
 
         for dbBroadcaster in dbList:
-            newList.append(TwitchBroadcaster(dbBroadcaster.name))
+            newList.append(TwitchBroadcaster.from_db(dbBroadcaster))
 
         self.twitchlist = TwitchList(newList)
 
@@ -235,8 +264,13 @@ class TwitchList(object):
                 broadcaster.game = channel['meta_game']
                 broadcaster.title = broadcaster_data['title']
                 broadcaster.viewers = broadcaster_data['channel_count']
-        except:
-            pass
+
+                if broadcaster.justLive():
+                    broadcaster.lastlive = datetime.utcnow()
+                    broadcaster.updateDB()
+
+        except Exception, e:
+            log.debug(u'Error while updating broadcasters %s' % (e.message))
 
     def add(self, broadcaster):
         self.broadcasters[broadcaster.name] = broadcaster
