@@ -69,21 +69,20 @@ class TwitchBroadcaster(object):
 
     def update(self):
         try:
-            new_data = json_webservice('http://api.justin.tv/api/stream/list.json?channel=' + self.name)
+            new_data = json_webservice('https://api.twitch.tv/kraken/streams?channel=' + self.name)
 
-            broadcaster_data = new_data.pop()
+            broadcaster_data = new_data['streams'].pop()
 
             del self.previous
             self.previous = copy.copy(self)
             self.live = False
 
             channel = broadcaster_data['channel']
-            login = channel['login']
 
             self.live = True
-            self.game = channel['meta_game']
-            self.title = broadcaster_data['title']
-            self.viewers = broadcaster_data['channel_count']
+            self.game = broadcaster_data['game']
+            self.title = channel['status']
+            self.viewers = broadcaster_data['viewers']
         except Exception, e:
             log.debug(u'Error while updating broadcasters %s' % (e.message))
 
@@ -247,7 +246,7 @@ class TwitchList(object):
 
     def update(self):
         try:
-            new_data = json_webservice('http://api.justin.tv/api/stream/list.json?channel=' + ','.join(self.broadcasters.keys()))
+            new_data = json_webservice('https://api.twitch.tv/kraken/streams?channel=' + ','.join(self.broadcasters.keys()))
 
             for broadcaster_name in self.broadcasters:
                 broadcaster = self.getBroadcasterByName(broadcaster_name)
@@ -255,15 +254,15 @@ class TwitchList(object):
                 broadcaster.previous = copy.copy(broadcaster)
                 broadcaster.live = False
 
-            for broadcaster_data in new_data:
+            for broadcaster_data in new_data['streams']:
                 channel = broadcaster_data['channel']
-                login = channel['login']
+                login = channel['name']
 
                 broadcaster = self.getBroadcasterByName(login) 
                 broadcaster.live = True
-                broadcaster.game = channel['meta_game']
-                broadcaster.title = broadcaster_data['title']
-                broadcaster.viewers = broadcaster_data['channel_count']
+                broadcaster.game = broadcaster_data['game']
+                broadcaster.title = channel['status']
+                broadcaster.viewers = broadcaster_data['viewers']
 
                 if broadcaster.justLive():
                     broadcaster.lastlive = datetime.utcnow()
