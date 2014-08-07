@@ -43,7 +43,7 @@ class TwitchBroadcaster(object):
         self.game = ''
         self.title = ''
         self.viewers = 0
-        self.liveurl = 'http://twitch.tv/' + name
+        self.liveurl = ''
         self.lastlive = None
 
     @classmethod
@@ -67,22 +67,47 @@ class TwitchBroadcaster(object):
     def format_lastlive(self):
         return format_date(self.lastlive) if self.lastlive else 'Never'
 
-    def update(self):
+    def updateTwitch(self):
         try:
             new_data = json_webservice('https://api.twitch.tv/kraken/streams?channel=' + self.name)
+        except Exception, e:
+            return False
 
+        if new_data['streams']:
             broadcaster_data = new_data['streams'].pop()
-
-            del self.previous
-            self.previous = copy.copy(self)
-            self.live = False
-
             channel = broadcaster_data['channel']
-
             self.live = True
             self.game = broadcaster_data['game']
             self.title = channel['status']
             self.viewers = broadcaster_data['viewers']
+            self.service = u'twitch'
+            self.liveurl = channel['url']
+
+    def updateHitbox(self):
+        try:
+            new_data = json_webservice('http://api.hitbox.tv/media/live/' + self.name)
+        except Exception, e:
+            return False
+
+        if new_data['livestream']:
+            media = new_data['livestream'].pop()
+
+            if media['media_is_live'] == u'1':
+                self.live = True
+                self.game = media['category_name']
+                self.title = media['media_status']
+                self.viewers = media['media_views']
+                self.service = u'hitbox'
+                self.liveurl = media['channel']['channel_link']
+
+    def update(self):
+        del self.previous
+        self.previous = copy.copy(self)
+        self.live = False
+
+        try:
+            self.updateHitbox()
+            self.updateTwitch()
         except Exception, e:
             log.debug(u'Error while updating broadcasters %s' % (e.message))
 
@@ -238,32 +263,59 @@ class TwitchAnnouncer(Processor):
         self.twitchlist.update()
 
 class TwitchList(object):
-    broadcasters = {} 
+    broadcasters = {}
     def __init__(self, broadcaster_list=[]):
         self.broadcasters = {}
         for broadcaster in broadcaster_list:
             self.broadcasters[broadcaster.name] = broadcaster
 
-    def update(self):
+    def updateHitbox(self):
+        try:
+            new_data = json_webservice('http://api.hitbox.tv/media/live/' + ','.join(self.broadcasters.keys()))
+        except Exception, e:
+            return False
+
+        for media in new_data['livestream']:
+            if media['media_is_live'] == u'1':
+                login = media['media_user_name']
+                broadcaster = self.getBroadcasterByName(login)
+                broadcaster.live = True
+                broadcaster.game = media['category_name']
+                broadcaster.title = media['media_status']
+                broadcaster.viewers = media['media_views']
+                broadcaster.liveurl = media['channel']['channel_link']
+
+    def updateTwitch(self):
         try:
             new_data = json_webservice('https://api.twitch.tv/kraken/streams?channel=' + ','.join(self.broadcasters.keys()))
+        except Exception, e:
+            return False
 
+        for broadcaster_data in new_data['streams']:
+            channel = broadcaster_data['channel']
+            login = channel['name']
+
+            broadcaster = self.getBroadcasterByName(login)
+            broadcaster.live = True
+            broadcaster.game = broadcaster_data['game']
+            broadcaster.title = channel['status']
+            broadcaster.viewers = broadcaster_data['viewers']
+            broadcaster.liveurl = channel['url']
+
+
+    def update(self):
+        try:
             for broadcaster_name in self.broadcasters:
                 broadcaster = self.getBroadcasterByName(broadcaster_name)
                 del broadcaster.previous
                 broadcaster.previous = copy.copy(broadcaster)
                 broadcaster.live = False
 
-            for broadcaster_data in new_data['streams']:
-                channel = broadcaster_data['channel']
-                login = channel['name']
+            self.updateHitbox()
+            self.updateTwitch()
 
-                broadcaster = self.getBroadcasterByName(login) 
-                broadcaster.live = True
-                broadcaster.game = broadcaster_data['game']
-                broadcaster.title = channel['status']
-                broadcaster.viewers = broadcaster_data['viewers']
 
+            for broadcaster_name in self.broadcasters:
                 if broadcaster.justLive():
                     broadcaster.lastlive = datetime.utcnow()
                     broadcaster.updateDB()
